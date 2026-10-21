@@ -10,6 +10,15 @@
 
 ![Светлая тема](docs/preview-light.png)
 
+## Скачать
+
+[![Release](https://img.shields.io/github/v/release/vvixter84-jpg/ForgePad)](https://github.com/vvixter84-jpg/ForgePad/releases/latest)
+
+Готовый `ForgePad.exe` (~1 МБ): **[скачать последнюю версию](https://github.com/vvixter84-jpg/ForgePad/releases/latest/download/ForgePad.exe)**
+
+Нужен [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) и .NET 10 Desktop Runtime
+(Windows обычно предлагает поставить его сам).
+
 ---
 
 ## Что умеет
@@ -60,7 +69,8 @@
 
 ### Готовый exe
 
-1. Скачай `ForgePad.exe` из раздела **Releases**.
+1. Скачай [ForgePad.exe](https://github.com/vvixter84-jpg/ForgePad/releases/latest/download/ForgePad.exe)
+   из раздела **Releases**.
 2. Положи в любую папку и запусти.
 3. При первом запуске приложение создаст `Documents\ForgePad`.
 

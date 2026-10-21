@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ForgePad.App/ForgePad.App.csproj" />
+    <Project Path="src/ForgePad.Core/ForgePad.Core.csproj" />
+    <Project Path="src/ForgePad.MixerTest/ForgePad.MixerTest.csproj" />
+  </Folder>
+</Solution>

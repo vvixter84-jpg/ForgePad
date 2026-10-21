@@ -1,0 +1,18 @@
+# Сборка и IDE
+bin/
+obj/
+dist/
+single/
+.vs/
+.idea/
+*.user
+*.suo
+
+# Логи и локальные данные
+forgepad.log
+*.log
+
+# ОС
+Thumbs.db
+desktop.ini
+.DS_Store

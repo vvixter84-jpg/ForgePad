@@ -23,8 +23,14 @@ public sealed class SoundLibrary
 
     public List<SoundEntry> Entries { get; } = new();
 
-    public static string RootDir =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ForgePad");
+    private static readonly Lazy<string> RootLazy = new(ResolveRoot);
+
+    /// <summary>
+    /// Папка данных. Выбирается по факту возможности записи: «Документы» на некоторых
+    /// системах закрыты политиками или защитой от вымогателей, а неработающий импорт
+    /// с непонятной ошибкой — худший вариант.
+    /// </summary>
+    public static string RootDir => RootLazy.Value;
 
     public static string SoundsDir => Path.Combine(RootDir, "sounds");
 
@@ -33,9 +39,92 @@ public sealed class SoundLibrary
     public static bool IsAudioFile(string path) =>
         AudioExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
 
+    private static string ResolveRoot()
+    {
+        string baseDir = AppContext.BaseDirectory;
+
+        // Портативный режим: данные рядом с программой (удобно с флешки).
+        if (File.Exists(Path.Combine(baseDir, "portable.txt")))
+            return EnsureWritable(Path.Combine(baseDir, "data")) ?? baseDir;
+
+        string local = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ForgePad");
+
+        string documents = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ForgePad");
+
+        string temp = Path.Combine(Path.GetTempPath(), "ForgePad");
+
+        foreach (string candidate in new[] { local, documents, temp })
+        {
+            string? writable = EnsureWritable(candidate);
+
+            if (writable is null)
+                continue;
+
+            // Перенесли профиль в LocalAppData — забираем с собой прежние звуки.
+            if (!string.Equals(writable, documents, StringComparison.OrdinalIgnoreCase))
+                Migrate(documents, writable);
+
+            return writable;
+        }
+
+        return EnsureWritable(Path.Combine(baseDir, "data")) ?? temp;
+    }
+
+    /// <summary>Проверяет запись реальным файлом, а не наличием папки.</summary>
+    private static string? EnsureWritable(string directory)
+    {
+        try
+        {
+            Directory.CreateDirectory(directory);
+            string probe = Path.Combine(directory, ".write-test");
+            File.WriteAllText(probe, "ok");
+            File.Delete(probe);
+            return directory;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Копирует каталог и звуки из прежней папки, не затирая существующее.</summary>
+    private static void Migrate(string from, string to)
+    {
+        try
+        {
+            if (!Directory.Exists(from))
+                return;
+
+            if (File.Exists(Path.Combine(to, "library.json")))
+                return;
+
+            Directory.CreateDirectory(to);
+
+            foreach (string file in Directory.GetFiles(from))
+                File.Copy(file, Path.Combine(to, Path.GetFileName(file)), overwrite: false);
+
+            string fromSounds = Path.Combine(from, "sounds");
+
+            if (!Directory.Exists(fromSounds))
+                return;
+
+            string toSounds = Path.Combine(to, "sounds");
+            Directory.CreateDirectory(toSounds);
+
+            foreach (string file in Directory.GetFiles(fromSounds))
+                File.Copy(file, Path.Combine(toSounds, Path.GetFileName(file)), overwrite: false);
+        }
+        catch
+        {
+            // Перенос — вспомогательный шаг: если не вышло, работаем с пустым каталогом.
+        }
+    }
+
     public static SoundLibrary Load()
     {
-        Directory.CreateDirectory(SoundsDir);
+        try { Directory.CreateDirectory(SoundsDir); } catch { /* папку создаст импорт */ }
 
         var library = new SoundLibrary();
 
@@ -86,7 +175,10 @@ public sealed class SoundLibrary
         }
     }
 
-    /// <summary>Копирует файл в каталог и возвращает новую запись (или существующую при дубле).</summary>
+    /// <summary>
+    /// Добавляет файл в каталог: копирует в библиотеку, а если копирование запрещено —
+    /// подключает по исходному пути, чтобы звук всё равно работал.
+    /// </summary>
     public SoundEntry Import(string sourcePath)
     {
         string hash = ComputeHash(sourcePath);
@@ -94,23 +186,55 @@ public sealed class SoundLibrary
         string fileName = hash + extension;
         string target = Path.Combine(SoundsDir, fileName);
 
-        if (!File.Exists(target))
-            File.Copy(sourcePath, target);
-
         SoundEntry? existing = Entries.FirstOrDefault(e => e.FileName == fileName);
         if (existing is not null)
             return existing;
 
-        var entry = new SoundEntry
+        if (File.Exists(target))
         {
-            Name = Path.GetFileNameWithoutExtension(sourcePath),
-            FileName = fileName,
-            AddedAt = DateTime.Now,
-            FullPath = target,
-        };
+            var ready = new SoundEntry
+            {
+                Name = Path.GetFileNameWithoutExtension(sourcePath),
+                FileName = fileName,
+                AddedAt = DateTime.Now,
+                FullPath = target,
+            };
 
-        Entries.Add(entry);
-        return entry;
+            Entries.Add(ready);
+            return ready;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(SoundsDir);
+            File.Copy(sourcePath, target);
+
+            var copied = new SoundEntry
+            {
+                Name = Path.GetFileNameWithoutExtension(sourcePath),
+                FileName = fileName,
+                AddedAt = DateTime.Now,
+                FullPath = target,
+            };
+
+            Entries.Add(copied);
+            return copied;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            // Папка библиотеки недоступна — работаем ссылкой на исходный файл.
+            var linked = new SoundEntry
+            {
+                Name = Path.GetFileNameWithoutExtension(sourcePath),
+                FileName = "",
+                ExternalPath = sourcePath,
+                AddedAt = DateTime.Now,
+                FullPath = sourcePath,
+            };
+
+            Entries.Add(linked);
+            return linked;
+        }
     }
 
     public void Remove(SoundEntry entry)
@@ -139,7 +263,11 @@ public sealed class SoundLibrary
     private void BindPaths()
     {
         foreach (SoundEntry entry in Entries)
-            entry.FullPath = Path.Combine(SoundsDir, entry.FileName);
+        {
+            entry.FullPath = string.IsNullOrEmpty(entry.ExternalPath)
+                ? Path.Combine(SoundsDir, entry.FileName)
+                : entry.ExternalPath;
+        }
     }
 
     private static string ComputeHash(string path)

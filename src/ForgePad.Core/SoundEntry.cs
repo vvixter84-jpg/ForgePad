@@ -16,6 +16,12 @@ public sealed class SoundEntry
     /// <summary>Имя файла внутри папки sounds.</summary>
     public string FileName { get; set; } = "";
 
+    /// <summary>
+    /// Путь к исходному файлу, если скопировать его в библиотеку не удалось
+    /// (например, папка данных закрыта политикой). Тогда звук играется прямо оттуда.
+    /// </summary>
+    public string? ExternalPath { get; set; }
+
     public float Gain { get; set; } = 1f;
 
     /// <summary>Привязка клавиши в текстовом виде: "F1", "Ctrl+F5", "Num3".</summary>
@@ -30,7 +36,11 @@ public sealed class SoundEntry
     public string FullPath { get; set; } = "";
 
     [JsonIgnore]
-    public bool Missing => FileName.Length == 0 || !File.Exists(FullPath);
+    public bool Missing => !File.Exists(FullPath);
+
+    /// <summary>Звук подключён по ссылке, а не скопирован в библиотеку.</summary>
+    [JsonIgnore]
+    public bool IsLinked => !string.IsNullOrEmpty(ExternalPath);
 
     /// <summary>Подпись для пустой плитки, если имя ещё не задано.</summary>
     public string DisplayName => string.IsNullOrWhiteSpace(Name) ? "без имени" : Name;

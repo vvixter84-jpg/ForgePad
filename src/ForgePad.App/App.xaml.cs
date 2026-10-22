@@ -77,6 +77,7 @@ public partial class App : Application
             window.Show();
 
             Log.Write("started");
+            Log.Write($"data dir: {SoundLibrary.RootDir}");
 
             if (e.Args.Contains("--selftest-play"))
             {

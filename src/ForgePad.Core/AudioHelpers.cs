@@ -289,8 +289,9 @@ internal sealed class SilenceProvider : ISampleProvider
 public static class SoundLoader
 {
     /// <summary>
-    /// Читает файл двумя путями: Media Foundation (надёжнее для mp3, m4a, flac на Windows 10/11)
-    /// и старый AudioFileReader как запасной. Ошибка первого не должна ломать второй.
+    /// Основной путь — NAudio (он же использовался до 1.0.1 и давал правильный звук),
+    /// запасной — Media Foundation для m4a/flac и «странных» mp3.
+    /// Результат первого проверяется: битые сэмплы означают, что нужен второй.
     /// </summary>
     public static float[] LoadSamples(string path, int sampleRate, int channels)
     {
@@ -298,10 +299,13 @@ public static class SoundLoader
 
         try
         {
-            NAudio.MediaFoundation.MediaFoundationApi.Startup();
+            using var reader = new AudioFileReader(path);
+            float[] samples = Decode(reader, sampleRate, channels);
 
-            using var reader = new MediaFoundationReader(path);
-            return Decode(reader.ToSampleProvider(), sampleRate, channels);
+            if (samples.Length > 0 && !HasBrokenSamples(samples))
+                return samples;
+
+            firstFailure = new InvalidOperationException("данные выглядят повреждёнными");
         }
         catch (Exception ex)
         {
@@ -310,15 +314,33 @@ public static class SoundLoader
 
         try
         {
-            using var reader = new AudioFileReader(path);
-            return Decode(reader, sampleRate, channels);
+            NAudio.MediaFoundation.MediaFoundationApi.Startup();
+
+            using var reader = new MediaFoundationReader(path);
+            float[] samples = Decode(reader.ToSampleProvider(), sampleRate, channels);
+
+            if (samples.Length > 0 && !HasBrokenSamples(samples))
+                return samples;
+
+            throw new InvalidOperationException("данные выглядят повреждёнными");
         }
         catch (Exception ex)
         {
             throw new InvalidOperationException(
                 $"Не удалось прочитать «{Path.GetFileName(path)}». " +
-                $"Media Foundation: {firstFailure?.Message ?? "—"}. NAudio: {ex.Message}", ex);
+                $"NAudio: {firstFailure?.Message ?? "—"}. Media Foundation: {ex.Message}", ex);
         }
+    }
+
+    private static bool HasBrokenSamples(float[] samples)
+    {
+        foreach (float sample in samples)
+        {
+            if (float.IsNaN(sample) || float.IsInfinity(sample))
+                return true;
+        }
+
+        return false;
     }
 
     private static float[] Decode(ISampleProvider source, int sampleRate, int channels)

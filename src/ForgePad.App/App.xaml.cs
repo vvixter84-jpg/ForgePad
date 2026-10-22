@@ -1,7 +1,7 @@
 using System;
 using System.Diagnostics;
-using System.IO;
 using System.Windows;
+using System.Threading.Tasks;
 using ForgePad.Core;
 
 namespace ForgePad.App;
@@ -10,22 +10,29 @@ public partial class App : Application
 {
     public App()
     {
-        DispatcherUnhandledException += (_, e) => Log(e.Exception);
-        AppDomain.CurrentDomain.UnhandledException += (_, e) => Log(e.ExceptionObject as Exception);
-    }
+        DispatcherUnhandledException += (_, e) =>
+        {
+            Log.Error(e.Exception, "ui");
 
-    /// <summary>У WinExe нет консоли: любая ошибка должна попадать в файл, иначе тихий выход.</summary>
-    private static void Log(Exception? exception)
-    {
-        try
+            // Ошибка в интерфейсе не должна убивать приложение и показывать
+            // системное «неизвестное исключение» без деталей.
+            e.Handled = true;
+
+            MessageBox.Show(
+                "Что-то пошло не так:\n\n" + e.Exception.Message +
+                "\n\nПодробности записаны в " + Log.FilePath,
+                "ForgePad",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        };
+
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Error(e.ExceptionObject as Exception ?? new Exception("unknown"), "appdomain");
+
+        TaskScheduler.UnobservedTaskException += (_, e) =>
         {
-            string path = Path.Combine(Path.GetTempPath(), "forgepad-crash.log");
-            File.AppendAllText(path, DateTime.Now.ToString("HH:mm:ss") + Environment.NewLine + exception + Environment.NewLine + Environment.NewLine);
-        }
-        catch
-        {
-            // Логирование не должно падать само.
-        }
+            Log.Error(e.Exception, "task");
+            e.SetObserved();
+        };
     }
 
     protected override void OnStartup(StartupEventArgs e)
@@ -69,6 +76,8 @@ public partial class App : Application
             MainWindow = window;
             window.Show();
 
+            Log.Write("started");
+
             if (e.Args.Contains("--selftest-play"))
             {
                 var timer = new System.Windows.Threading.DispatcherTimer
@@ -87,8 +96,8 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            Log(ex);
-            MessageBox.Show("Не удалось открыть окно:\n\n" + ex.Message, "ForgePad");
+            Log.Error(ex, "startup");
+            MessageBox.Show("Не удалось открыть окно:\n\n" + ex.Message + "\n\nЛог: " + Log.FilePath, "ForgePad");
             Shutdown(1);
         }
     }

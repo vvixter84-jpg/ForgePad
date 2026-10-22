@@ -112,6 +112,9 @@ internal sealed class MixerProvider : ISampleProvider
         lock (_gate) _voices.Clear();
     }
 
+    /// <summary>Сбой внутри звукового колбэка: сообщаем наружу, но не роняем процесс.</summary>
+    public event Action<Exception>? Fault;
+
     /// <summary>Снимок играющих звуков: имя (путь файла) и прогресс 0..1.</summary>
     public List<(string Name, float Progress)> Snapshot()
     {
@@ -134,36 +137,62 @@ internal sealed class MixerProvider : ISampleProvider
 
     public int Read(float[] buffer, int offset, int count)
     {
-        int read = _mic.Read(buffer, offset, count);
-
-        lock (_gate)
+        try
         {
-            for (int i = _voices.Count - 1; i >= 0; i--)
+            int read = _mic.Read(buffer, offset, count);
+
+            lock (_gate)
             {
-                Voice voice = _voices[i];
-                float[] data = voice.Data;
-                int n = Math.Min(count, data.Length - voice.Position);
-                int pos = voice.Position;
-                float gain = voice.Gain * PadGain;
+                for (int i = _voices.Count - 1; i >= 0; i--)
+                {
+                    Voice voice = _voices[i];
+                    float[] data = voice.Data;
+                    int n = Math.Min(count, data.Length - voice.Position);
 
-                for (int k = 0; k < n; k++)
-                    buffer[offset + k] += data[pos + k] * gain;
+                    if (n <= 0)
+                    {
+                        // Позиция вышла за данные (не должно случаться) — убираем голос,
+                        // иначе получим исключение в аудиопотоке.
+                        _voices.RemoveAt(i);
+                        continue;
+                    }
 
-                voice.Position = pos + n;
-                if (voice.Finished)
-                    _voices.RemoveAt(i);
+                    int pos = voice.Position;
+                    float gain = voice.Gain * PadGain;
+
+                    for (int k = 0; k < n; k++)
+                        buffer[offset + k] += data[pos + k] * gain;
+
+                    voice.Position = pos + n;
+
+                    if (voice.Finished)
+                        _voices.RemoveAt(i);
+                }
             }
-        }
 
-        // Мягкое ограничение: клиппинг жёстко режет, а нам нужен просто потолок.
-        for (int i = 0; i < read; i++)
+            // Мягкое ограничение: клиппинг жёстко режет, а нам нужен просто потолок.
+            for (int i = 0; i < read; i++)
+            {
+                float s = buffer[offset + i];
+                if (s > 1f) buffer[offset + i] = 1f;
+                else if (s < -1f) buffer[offset + i] = -1f;
+            }
+
+            return read;
+        }
+        catch (Exception ex)
         {
-            float s = buffer[offset + i];
-            if (s > 1f) buffer[offset + i] = 1f;
-            else if (s < -1f) buffer[offset + i] = -1f;
-        }
+            // Сбой одного блока не должен убивать приложение: отдаём тишину,
+            // чистим голоса и сообщаем наверх.
+            Array.Clear(buffer, offset, count);
 
-        return read;
+            lock (_gate)
+                _voices.Clear();
+
+            try { Fault?.Invoke(ex); } catch { }
+
+            return count;
+        }
     }
 }
 
@@ -257,22 +286,53 @@ internal sealed class SilenceProvider : ISampleProvider
 }
 
 /// <summary>Декодирует файл целиком в float PCM нужной частоты и числа каналов.</summary>
-internal static class SoundLoader
+public static class SoundLoader
 {
+    /// <summary>
+    /// Читает файл двумя путями: Media Foundation (надёжнее для mp3, m4a, flac на Windows 10/11)
+    /// и старый AudioFileReader как запасной. Ошибка первого не должна ломать второй.
+    /// </summary>
     public static float[] LoadSamples(string path, int sampleRate, int channels)
     {
-        using var reader = new AudioFileReader(path);
+        Exception? firstFailure = null;
 
-        ISampleProvider source = reader;
-        source = new ChannelAdapter(source, channels);
-        if (reader.WaveFormat.SampleRate != sampleRate)
-            source = new WdlResamplingSampleProvider(source, sampleRate);
+        try
+        {
+            NAudio.MediaFoundation.MediaFoundationApi.Startup();
+
+            using var reader = new MediaFoundationReader(path);
+            return Decode(reader.ToSampleProvider(), sampleRate, channels);
+        }
+        catch (Exception ex)
+        {
+            firstFailure = ex;
+        }
+
+        try
+        {
+            using var reader = new AudioFileReader(path);
+            return Decode(reader, sampleRate, channels);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Не удалось прочитать «{Path.GetFileName(path)}». " +
+                $"Media Foundation: {firstFailure?.Message ?? "—"}. NAudio: {ex.Message}", ex);
+        }
+    }
+
+    private static float[] Decode(ISampleProvider source, int sampleRate, int channels)
+    {
+        ISampleProvider chain = new ChannelAdapter(source, channels);
+
+        if (source.WaveFormat.SampleRate != sampleRate)
+            chain = new WdlResamplingSampleProvider(chain, sampleRate);
 
         var samples = new List<float>(sampleRate * channels);
         var frame = new float[channels * 2048];
         int n;
 
-        while ((n = source.Read(frame, 0, frame.Length)) > 0)
+        while ((n = chain.Read(frame, 0, frame.Length)) > 0)
         {
             for (int i = 0; i < n; i++)
                 samples.Add(frame[i]);

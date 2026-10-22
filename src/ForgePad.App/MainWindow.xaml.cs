@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -453,22 +454,44 @@ public partial class MainWindow : Window
     private void ImportFiles(IEnumerable<string> paths)
     {
         int before = _library.Entries.Count;
+        var failures = new List<string>();
 
         foreach (string path in paths)
         {
             if (!SoundLibrary.IsAudioFile(path))
                 continue;
 
-            _library.Import(path);
+            try
+            {
+                _library.Import(path);
+            }
+            catch (Exception ex)
+            {
+                // Файл может быть занят плеером, лежать в защищённой папке или исчезнуть.
+                Log.Error(ex, "import " + path);
+                failures.Add($"{Path.GetFileName(path)}: {ex.Message}");
+            }
         }
 
-        if (_library.Entries.Count == before)
+        if (_library.Entries.Count != before)
+        {
+            _library.Save();
+            EnsureDefaultHotkeys();
+            RebuildTiles();
+            UpdateStatus();
+        }
+
+        if (failures.Count == 0)
             return;
 
-        _library.Save();
-        EnsureDefaultHotkeys();
-        RebuildTiles();
-        UpdateStatus();
+        MessageBox.Show(
+            this,
+            "Не удалось добавить:\n\n" + string.Join("\n", failures.Take(8)) +
+            (failures.Count > 8 ? $"\n…и ещё {failures.Count - 8}" : "") +
+            "\n\nОбычно помогает закрыть программу, которая держит файл, и повторить.",
+            "ForgePad",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
     }
 
     private void OnFilesDropped(object sender, DragEventArgs e)
@@ -685,6 +708,7 @@ public partial class MainWindow : Window
                 try
                 {
                     _engine = new MixerEngine(settings);
+                    _engine.Fault += ex => Log.Error(ex, "audio");
                     _engine.Start();
                 }
                 catch (Exception ex)

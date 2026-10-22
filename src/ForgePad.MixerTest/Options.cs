@@ -58,6 +58,9 @@ internal sealed record Options
     /// <summary>Измерить задержку до устройства вывода (наушники).</summary>
     public string? LatencyRenderFile { get; init; }
 
+    /// <summary>Проверить декодирование файла и выйти.</summary>
+    public string? DecodeFile { get; init; }
+
     /// <summary>Подробный лог перехвата клавиш.</summary>
     public bool HotkeyDebug { get; init; }
 
@@ -93,6 +96,7 @@ internal sealed record Options
         int? listen = null;
         string? latencyFile = null;
         string? latencyRenderFile = null;
+        string? decodeFile = null;
         bool takeover = true;
         string? micId = null;
         int? watchdogPid = null;
@@ -152,6 +156,9 @@ internal sealed record Options
                 case "--latency-test" when i + 1 < args.Length:
                     latencyFile = Path.GetFullPath(args[++i]);
                     break;
+                case "--decode" when i + 1 < args.Length:
+                    decodeFile = Path.GetFullPath(args[++i]);
+                    break;
                 case "--latency-render" when i + 1 < args.Length:
                     latencyRenderFile = Path.GetFullPath(args[++i]);
                     break;
@@ -209,6 +216,7 @@ internal sealed record Options
             ListenSeconds = listen,
             LatencyFile = latencyFile,
             LatencyRenderFile = latencyRenderFile,
+            DecodeFile = decodeFile,
             Seconds = seconds,
             LatencyMs = latency,
             CaptureBufferMs = captureBuffer,

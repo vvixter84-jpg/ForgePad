@@ -87,6 +87,10 @@ public sealed class MixerEngine : IDisposable
             mic = new WdlResamplingSampleProvider(mic, OutputFormat.SampleRate);
 
         _mixer = new MixerProvider(mic, OutputFormat) { PadGain = opts.PadGain };
+        _mixer.Fault += ex =>
+        {
+            try { Fault?.Invoke(ex); } catch { }
+        };
 
         IWaveProvider chain = BuildChain(
             _mixer, OutputFormat, _outRaw, n => Interlocked.Add(ref _playedBytes, n));
@@ -241,6 +245,9 @@ public sealed class MixerEngine : IDisposable
     public void ResetMicPeak() => _micPeak = 0f;
 
     public void StopAll() => _mixer.StopAll();
+
+    /// <summary>Сбой в аудиопотоке или фоновом цикле: приложение продолжает работать.</summary>
+    public event Action<Exception>? Fault;
 
     /// <summary>Что сейчас играет: путь файла и прогресс 0..1 — для подсветки плиток.</summary>
     public IReadOnlyList<(string Name, float Progress)> SnapshotVoices() => _mixer.Snapshot();
@@ -401,40 +408,45 @@ public sealed class MixerEngine : IDisposable
 
         while (!_cts.IsCancellationRequested)
         {
-            Thread.Sleep(250);
-
-            TimeSpan buffered = _micBuffer.BufferedDuration;
-
-            if (buffered > TimeSpan.FromMilliseconds(TrimThresholdMs))
+            try
             {
-                TrimMs((int)buffered.TotalMilliseconds - TrimTargetMs);
-                Interlocked.Increment(ref _trims);
-                buffered = _micBuffer.BufferedDuration;
+                Thread.Sleep(250);
+
+                TimeSpan buffered = _micBuffer.BufferedDuration;
+
+                if (buffered > TimeSpan.FromMilliseconds(TrimThresholdMs))
+                {
+                    TrimMs((int)buffered.TotalMilliseconds - TrimTargetMs);
+                    Interlocked.Increment(ref _trims);
+                    buffered = _micBuffer.BufferedDuration;
+                }
+
+                if (clock.Elapsed >= nextReport)
+                {
+                    double seconds = (clock.Elapsed - lastSample).TotalSeconds;
+                    long captured = Interlocked.Read(ref _capturedBytes);
+                    long played = Interlocked.Read(ref _playedBytes);
+                    long starved = _starvation.Count;
+                    float peakMic = _micPeak;
+
+                    double inRate = (captured - lastCaptured) / (double)micFrame / seconds;
+                    double outRate = (played - lastPlayed) / (double)outFrame / seconds;
+                    long starvedDelta = starved - lastStarved;
+
+                    lastCaptured = captured;
+                    lastPlayed = played;
+                    lastStarved = starved;
+                    lastSample = clock.Elapsed;
+                    nextReport = clock.Elapsed + TimeSpan.FromSeconds(10);
+
+                    _micPeak = 0f;
+                }
             }
-
-            if (clock.Elapsed >= nextReport)
+            catch (Exception ex)
             {
-                double seconds = (clock.Elapsed - lastSample).TotalSeconds;
-                long captured = Interlocked.Read(ref _capturedBytes);
-                long played = Interlocked.Read(ref _playedBytes);
-                long starved = _starvation.Count;
-                float peakMic = _micPeak;
-
-                double inRate = (captured - lastCaptured) / (double)micFrame / seconds;
-                double outRate = (played - lastPlayed) / (double)outFrame / seconds;
-                long starvedDelta = starved - lastStarved;
-
-                lastCaptured = captured;
-                lastPlayed = played;
-                lastStarved = starved;
-                lastSample = clock.Elapsed;
-                nextReport = clock.Elapsed + TimeSpan.FromSeconds(10);
-
-                Console.WriteLine(
-                    $"    [буфер {buffered.TotalMilliseconds:F0} мс · вход {inRate:F0} · выход {outRate:F0} кадр/с · " +
-                    $"голос {peakMic:F3} · голод {starvedDelta} · голосов {_mixer.ActiveVoices}]");
-
-                _micPeak = 0f;
+                // Фоновый цикл не должен ронять приложение: сообщаем и живём дальше.
+                try { Fault?.Invoke(ex); } catch { }
+                Thread.Sleep(1000);
             }
         }
     }

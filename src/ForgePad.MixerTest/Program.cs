@@ -25,6 +25,9 @@ internal static class Program
             if (opts.WatchdogPid is int watchdogPid && opts.WatchdogRestore is string watchdogDevice)
                 return Watchdog(watchdogPid, watchdogDevice);
 
+            if (opts.DecodeFile is string decodeFile)
+                return DecodeCheck(decodeFile);
+
             if (opts.LatencyFile is string latencyFile)
                 return LatencyCheck(opts, latencyFile, render: false);
 
@@ -247,6 +250,34 @@ internal static class Program
     /// Слушает loopback-копию устройства вывода: показывает, звучит ли что-то в наушниках.
     /// Так можно проверить, доходит ли звук до принимающей программы, не слушая ушами.
     /// </summary>
+    /// <summary>Проверяет декодирование файла тем же кодом, что и воспроизведение.</summary>
+    private static int DecodeCheck(string file)
+    {
+        if (!File.Exists(file))
+        {
+            Console.WriteLine("Нет файла: " + file);
+            return 2;
+        }
+
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            float[] samples = SoundLoader.LoadSamples(file, 48000, 2);
+            clock.Stop();
+
+            double seconds = samples.Length / 2.0 / 48000.0;
+            Console.WriteLine($"ок: {samples.Length} сэмплов, {seconds:F2} c, декодировано за {clock.ElapsedMilliseconds} мс");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("ошибка декодирования: " + ex.Message);
+            Console.WriteLine();
+            Console.WriteLine(ex);
+            return 3;
+        }
+    }
+
     /// <summary>
     /// Меряет задержку: от вызова PlaySound до первых сэмплов на входе кабеля.
     /// Это и есть то, что чувствуется как «пэд сработал с опозданием».

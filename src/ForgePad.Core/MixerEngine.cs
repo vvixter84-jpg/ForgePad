@@ -209,7 +209,13 @@ public sealed class MixerEngine : IDisposable
     public void PlaySound(string path, float gain = 1f)
     {
         float[] samples = SoundLoader.LoadSamples(path, OutputFormat.SampleRate, OutputFormat.Channels);
-        _mixer.Add(new Voice { Name = path, Data = samples, Gain = gain });
+
+        // Тихие файлы (а они встречаются часто) тонут в собственном шуме микрофона.
+        // Подтягиваем пик к слышимому уровню, но без фанатизма.
+        float normalisation = ComputeNormalisation(samples);
+        float totalGain = gain * normalisation;
+
+        _mixer.Add(new Voice { Name = path, Data = samples, Gain = totalGain });
 
         if (_monitorMixer is null || _monitorFormat is null)
             return;
@@ -221,7 +227,26 @@ public sealed class MixerEngine : IDisposable
                 ? samples
                 : SoundLoader.LoadSamples(path, _monitorFormat.SampleRate, _monitorFormat.Channels);
 
-        _monitorMixer.Add(new Voice { Name = path, Data = monitorSamples, Gain = gain });
+        _monitorMixer.Add(new Voice { Name = path, Data = monitorSamples, Gain = totalGain });
+    }
+
+    /// <summary>Множитель, подтягивающий тихий звук к слышимому уровню (не больше 6×).</summary>
+    private static float ComputeNormalisation(float[] samples)
+    {
+        float peak = 0;
+
+        foreach (float sample in samples)
+        {
+            float value = Math.Abs(sample);
+            if (value > peak) peak = value;
+        }
+
+        // Уже громкий файл не трогаем: иначе получим перегруз.
+        if (peak >= 0.5f || peak <= 0.0001f)
+            return 1f;
+
+        float factor = 0.9f / peak;
+        return Math.Clamp(factor, 1f, 6f);
     }
 
     /// <summary>Включает и выключает слышимость пэдов для тебя. Возвращает новое состояние.</summary>

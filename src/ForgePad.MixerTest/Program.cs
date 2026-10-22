@@ -282,7 +282,12 @@ internal static class Program
 
         var peak = new double[1];
         var sum = new double[1];
+        var firstAbove = new long[1];
+        var lastAbove = new long[1];
+        long sampleIndex = 0;
         long count = 0;
+        int crossings = 0;
+        float previous = 0;
 
         using var capture = new WasapiCapture(cableOut);
         capture.DataAvailable += (_, e) =>
@@ -292,34 +297,101 @@ internal static class Program
 
             double localPeak = peak[0];
             double localSum = sum[0];
+            int localCrossings = crossings;
+            float localPrevious = previous;
 
             for (int i = 0; i < samples.Length; i++)
             {
                 double value = Math.Abs(samples[i]);
                 if (value > localPeak) localPeak = value;
                 localSum += value * value;
+
+                if (value > 0.005)
+                {
+                    if (firstAbove[0] == 0) firstAbove[0] = sampleIndex + i;
+                    lastAbove[0] = sampleIndex + i;
+                }
+
+                if ((localPrevious < 0 && samples[i] >= 0) || (localPrevious >= 0 && samples[i] < 0))
+                    localCrossings++;
+
+                localPrevious = samples[i];
             }
 
             peak[0] = localPeak;
             sum[0] = localSum;
+            crossings = localCrossings;
+            previous = localPrevious;
             count += samples.Length;
+            sampleIndex += samples.Length;
+        };
+
+        // То же самое для наушников: именно это пользователь и слышит.
+        var renderPeak = new double[1];
+        var renderSum = new double[1];
+        long renderCount = 0;
+        int renderCrossings = 0;
+        float renderPrevious = 0;
+
+        using MMDevice defaultRender = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+        using var renderCapture = new WasapiLoopbackCapture(defaultRender);
+        renderCapture.DataAvailable += (_, e) =>
+        {
+            var samples = new float[e.BytesRecorded / 4];
+            Buffer.BlockCopy(e.Buffer, 0, samples, 0, e.BytesRecorded);
+
+            double localPeak = renderPeak[0];
+            double localSum = renderSum[0];
+            int localCrossings = renderCrossings;
+            float localPrevious = renderPrevious;
+
+            for (int i = 0; i < samples.Length; i++)
+            {
+                double value = Math.Abs(samples[i]);
+                if (value > localPeak) localPeak = value;
+                localSum += value * value;
+
+                if ((localPrevious < 0 && samples[i] >= 0) || (localPrevious >= 0 && samples[i] < 0))
+                    localCrossings++;
+
+                localPrevious = samples[i];
+            }
+
+            renderPeak[0] = localPeak;
+            renderSum[0] = localSum;
+            renderCrossings = localCrossings;
+            renderPrevious = localPrevious;
+            renderCount += samples.Length;
         };
 
         using var engine = new MixerEngine(opts.ToAudioSettings());
         engine.Start();
         capture.StartRecording();
+        renderCapture.StartRecording();
 
         Thread.Sleep(600);
         engine.PlaySound(file);
-        Thread.Sleep(3000);
+        Thread.Sleep(9000);
         capture.StopRecording();
+        renderCapture.StopRecording();
 
         double rms = count > 0 ? Math.Sqrt(sum[0] / count) : 0;
-        Console.WriteLine($"в кабеле: пик {peak[0]:F4}, RMS {rms:F4}");
+        double zcr = count > 0 ? crossings / (count / 2.0 / 48000.0) : 0;
+        Console.WriteLine($"в кабеле:    пик {peak[0]:F4}, RMS {rms:F4}, переходов {zcr:F0}/с");
+
+        if (lastAbove[0] > firstAbove[0])
+        {
+            double playedSeconds = (lastAbove[0] - firstAbove[0]) / 2.0 / 48000.0;
+            double sourceSeconds = source.Length / 2.0 / 48000.0;
+            Console.WriteLine($"длительность: файл {sourceSeconds:F2} с, в кабеле {playedSeconds:F2} с");
+        }
+        double renderRms = renderCount > 0 ? Math.Sqrt(renderSum[0] / renderCount) : 0;
+        double renderZcr = renderCount > 0 ? renderCrossings / (renderCount / 2.0 / 44100.0) : 0;
+        Console.WriteLine($"в наушниках: пик {renderPeak[0]:F4}, RMS {renderRms:F4}, переходов {renderZcr:F0}/с");
         return 0;
     }
 
-    /// <summary>Печатает пик, RMS и признаки мусора — по ним видно порчу формата.</summary>
+    /// <summary>Печатает пик, RMS, «частоту» переходов через ноль и признаки мусора.</summary>
     private static string Describe(float[] samples, string label)
     {
         if (samples.Length == 0)
@@ -328,6 +400,8 @@ internal static class Program
         double peak = 0;
         double sumSquares = 0;
         int bad = 0;
+        int crossings = 0;
+        float previous = 0;
 
         foreach (float sample in samples)
         {
@@ -340,10 +414,18 @@ internal static class Program
             double value = Math.Abs(sample);
             if (value > peak) peak = value;
             sumSquares += value * value;
+
+            if ((previous < 0 && sample >= 0) || (previous >= 0 && sample < 0))
+                crossings++;
+
+            previous = sample;
         }
 
         double rms = Math.Sqrt(sumSquares / samples.Length);
-        return $"{label}: пик {peak:F4}, RMS {rms:F4}, NaN/Inf {bad}";
+        double seconds = samples.Length / 2.0 / 48000.0;
+        double zcr = seconds > 0 ? crossings / seconds : 0;
+
+        return $"{label}: пик {peak:F4}, RMS {rms:F4}, переходов {zcr:F0}/с, NaN/Inf {bad}";
     }
 
     /// <summary>Проверяет декодирование файла тем же кодом, что и воспроизведение.</summary>

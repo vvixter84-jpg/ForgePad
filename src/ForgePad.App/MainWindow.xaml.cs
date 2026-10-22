@@ -36,7 +36,7 @@ public partial class MainWindow : Window
     private string? _micTakenFrom;
     private PadTile? _renaming;
     private PadTile? _editing;
-    private bool _monitorOn = true;
+    private bool _monitorOn;
     private bool _capturingHotkey;
     private bool _suspendInspector;
 
@@ -732,6 +732,8 @@ public partial class MainWindow : Window
         string cable = _engine?.CableName ?? "нет устройства";
         string monitor = _monitorOn ? "вкл" : "выкл";
 
+        MonitorButton.Content = _monitorOn ? "Монитор: вкл" : "Монитор: выкл";
+
         StatusText.Text =
             $"{_library.Entries.Count} звуков · канал: {cable} · монитор: {monitor} · F10 стоп · F11 монитор";
     }
@@ -759,7 +761,9 @@ public partial class MainWindow : Window
             var settings = new AudioSettings
             {
                 MicDeviceId = physical is not null && physical != cableId ? physical : null,
-                Monitor = true,
+
+                // Монитор выключен по умолчанию: включается клавишей F11.
+                Monitor = false,
             };
 
             Exception? failure = null;

@@ -177,7 +177,12 @@ public sealed class MixerEngine : IDisposable
         Console.WriteLine($"           {Describe(_outRaw)}");
 
         if (MonitorName is not null)
+        {
             Console.WriteLine($"Монитор  : {MonitorName} — слышишь пэды сам (F11 вкл/выкл)");
+
+            if (_monitorRaw is not null)
+                Console.WriteLine($"           {Describe(_monitorRaw)}");
+        }
         else
             Console.WriteLine("Монитор  : нет устройства для прослушивания");
 

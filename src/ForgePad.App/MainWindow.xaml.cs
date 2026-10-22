@@ -47,6 +47,10 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         _library = SoundLibrary.Load();
+
+        List<string> missing = _library.Entries.Where(e => e.Missing).Select(e => e.DisplayName).ToList();
+        if (missing.Count > 0)
+            Log.Write("missing files: " + string.Join(", ", missing));
         EnsureDefaultHotkeys();
 
         Pads.PlayRequested += PlayTile;

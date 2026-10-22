@@ -92,21 +92,38 @@ public sealed class SoundLibrary
     /// <summary>Копирует каталог и звуки из прежней папки, не затирая существующее.</summary>
     private static void Migrate(string from, string to)
     {
+        if (!Directory.Exists(from))
+            return;
+
         try
         {
-            if (!Directory.Exists(from))
-                return;
-
             if (File.Exists(Path.Combine(to, "library.json")))
                 return;
 
             Directory.CreateDirectory(to);
+        }
+        catch
+        {
+            return;
+        }
 
+        // Каждый файл отдельно: один недоступный не должен отменять перенос остальных.
+        try
+        {
             foreach (string file in Directory.GetFiles(from))
-                File.Copy(file, Path.Combine(to, Path.GetFileName(file)), overwrite: false);
+            {
+                try { File.Copy(file, Path.Combine(to, Path.GetFileName(file)), overwrite: false); }
+                catch { /* уже есть или недоступен */ }
+            }
+        }
+        catch
+        {
+            // Папку не прочитать — работаем с тем, что есть.
+        }
 
+        try
+        {
             string fromSounds = Path.Combine(from, "sounds");
-
             if (!Directory.Exists(fromSounds))
                 return;
 
@@ -114,11 +131,14 @@ public sealed class SoundLibrary
             Directory.CreateDirectory(toSounds);
 
             foreach (string file in Directory.GetFiles(fromSounds))
-                File.Copy(file, Path.Combine(toSounds, Path.GetFileName(file)), overwrite: false);
+            {
+                try { File.Copy(file, Path.Combine(toSounds, Path.GetFileName(file)), overwrite: false); }
+                catch { /* уже есть или недоступен */ }
+            }
         }
         catch
         {
-            // Перенос — вспомогательный шаг: если не вышло, работаем с пустым каталогом.
+            // Хотя бы каталог перенесён.
         }
     }
 
@@ -204,10 +224,15 @@ public sealed class SoundLibrary
             return ready;
         }
 
+        // Импорт проверяет, что файл действительно лёг на диск: иначе запись станет «файл не найден».
         try
         {
             Directory.CreateDirectory(SoundsDir);
             File.Copy(sourcePath, target);
+
+            var copiedFile = new FileInfo(target);
+            if (!copiedFile.Exists || copiedFile.Length == 0)
+                throw new IOException("копия не создана");
 
             var copied = new SoundEntry
             {

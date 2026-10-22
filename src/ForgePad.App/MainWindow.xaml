@@ -165,9 +165,15 @@
                             <TextBlock Text="ЦВЕТ" Style="{StaticResource MutedText}" Margin="0,18,0,6" />
                             <WrapPanel x:Name="ColorPanel" />
 
-                            <Button Content="Удалить звук"
+                            <Button Content="Проверить звук"
                                     Style="{StaticResource FlatButton}"
                                     Margin="0,26,0,0"
+                                    Click="OnCheckClick"
+                                    ToolTip="Длительность, громкость и состояние файла" />
+
+                            <Button Content="Удалить звук"
+                                    Style="{StaticResource FlatButton}"
+                                    Margin="0,8,0,0"
                                     Click="OnDeleteClick" />
                         </StackPanel>
                     </Grid>

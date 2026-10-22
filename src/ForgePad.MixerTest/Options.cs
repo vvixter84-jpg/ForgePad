@@ -61,6 +61,9 @@ internal sealed record Options
     /// <summary>Проверить декодирование файла и выйти.</summary>
     public string? DecodeFile { get; init; }
 
+    /// <summary>Проиграть файл и замерить, что пришло в кабель.</summary>
+    public string? RenderCheckFile { get; init; }
+
     /// <summary>Подробный лог перехвата клавиш.</summary>
     public bool HotkeyDebug { get; init; }
 
@@ -97,6 +100,7 @@ internal sealed record Options
         string? latencyFile = null;
         string? latencyRenderFile = null;
         string? decodeFile = null;
+        string? renderCheckFile = null;
         bool takeover = true;
         string? micId = null;
         int? watchdogPid = null;
@@ -159,6 +163,9 @@ internal sealed record Options
                 case "--decode" when i + 1 < args.Length:
                     decodeFile = Path.GetFullPath(args[++i]);
                     break;
+                case "--render-check" when i + 1 < args.Length:
+                    renderCheckFile = Path.GetFullPath(args[++i]);
+                    break;
                 case "--latency-render" when i + 1 < args.Length:
                     latencyRenderFile = Path.GetFullPath(args[++i]);
                     break;
@@ -217,6 +224,7 @@ internal sealed record Options
             LatencyFile = latencyFile,
             LatencyRenderFile = latencyRenderFile,
             DecodeFile = decodeFile,
+            RenderCheckFile = renderCheckFile,
             Seconds = seconds,
             LatencyMs = latency,
             CaptureBufferMs = captureBuffer,

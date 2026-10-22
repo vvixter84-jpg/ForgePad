@@ -282,6 +282,66 @@ public partial class MainWindow : Window
             DeleteTile(_editing);
     }
 
+    /// <summary>Показывает, что реально лежит в файле: формат, длительность, громкость.</summary>
+    private void OnCheckClick(object sender, RoutedEventArgs e)
+    {
+        if (_editing is null)
+            return;
+
+        SoundEntry entry = _editing.Entry;
+        string path = entry.FullPath;
+
+        if (!File.Exists(path))
+        {
+            MessageBox.Show(this, "Файл не найден:\n" + path, "ForgePad", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            float[] samples = SoundLoader.LoadSamples(path, 48000, 2);
+
+            double peak = 0;
+            double sum = 0;
+            int bad = 0;
+
+            foreach (float sample in samples)
+            {
+                if (float.IsNaN(sample) || float.IsInfinity(sample))
+                {
+                    bad++;
+                    continue;
+                }
+
+                double value = Math.Abs(sample);
+                if (value > peak) peak = value;
+                sum += value * value;
+            }
+
+            double rms = samples.Length > 0 ? Math.Sqrt(sum / samples.Length) : 0;
+            double seconds = samples.Length / 2.0 / 48000.0;
+
+            string report =
+                $"Файл: {Path.GetFileName(path)}\n" +
+                $"Длительность: {seconds:F2} с\n" +
+                $"Пик: {peak:F3}  ({20 * Math.Log10(Math.Max(peak, 1e-6)):F1} dBFS)\n" +
+                $"RMS: {rms:F4}  ({20 * Math.Log10(Math.Max(rms, 1e-6)):F1} dBFS)\n" +
+                $"Битых сэмплов: {bad}\n\n" +
+                (peak < 0.01
+                    ? "Файл почти тишина — возможно, битый или это не тот звук."
+                    : bad > 0
+                        ? "В данных есть некорректные значения — файл повреждён."
+                        : "Данные выглядят нормально: если слышно шум, проблема не в этом файле.");
+
+            MessageBox.Show(this, report, "Проверка звука", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "check " + path);
+            MessageBox.Show(this, "Не удалось прочитать файл:\n\n" + ex.Message, "ForgePad", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     // ---------- горячие клавиши ----------
 
     private static uint ToModifiers(ModifierKeys modifiers)

@@ -25,6 +25,9 @@ internal static class Program
             if (opts.WatchdogPid is int watchdogPid && opts.WatchdogRestore is string watchdogDevice)
                 return Watchdog(watchdogPid, watchdogDevice);
 
+            if (opts.RenderCheckFile is string renderCheck)
+                return RenderCheck(opts, renderCheck);
+
             if (opts.DecodeFile is string decodeFile)
                 return DecodeCheck(decodeFile);
 
@@ -250,6 +253,99 @@ internal static class Program
     /// Слушает loopback-копию устройства вывода: показывает, звучит ли что-то в наушниках.
     /// Так можно проверить, доходит ли звук до принимающей программы, не слушая ушами.
     /// </summary>
+    /// <summary>
+    /// Проигрывает файл через движок и измеряет, что реально пришло в кабель.
+    /// Сравнение с исходными сэмплами показывает, портится ли сигнал по дороге.
+    /// </summary>
+    private static int RenderCheck(Options opts, string file)
+    {
+        if (!File.Exists(file))
+        {
+            Console.WriteLine("Нет файла: " + file);
+            return 2;
+        }
+
+        float[] source = SoundLoader.LoadSamples(file, 48000, 2);
+        Console.WriteLine("источник: " + Describe(source, "файл"));
+
+        using var enumerator = new MMDeviceEnumerator();
+
+        MMDevice? cableOut = enumerator
+            .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+            .FirstOrDefault(d => d.FriendlyName.Contains("CABLE Output", StringComparison.OrdinalIgnoreCase));
+
+        if (cableOut is null)
+        {
+            Console.WriteLine("Не найден вход «CABLE Output».");
+            return 2;
+        }
+
+        var peak = new double[1];
+        var sum = new double[1];
+        long count = 0;
+
+        using var capture = new WasapiCapture(cableOut);
+        capture.DataAvailable += (_, e) =>
+        {
+            var samples = new float[e.BytesRecorded / 4];
+            Buffer.BlockCopy(e.Buffer, 0, samples, 0, e.BytesRecorded);
+
+            double localPeak = peak[0];
+            double localSum = sum[0];
+
+            for (int i = 0; i < samples.Length; i++)
+            {
+                double value = Math.Abs(samples[i]);
+                if (value > localPeak) localPeak = value;
+                localSum += value * value;
+            }
+
+            peak[0] = localPeak;
+            sum[0] = localSum;
+            count += samples.Length;
+        };
+
+        using var engine = new MixerEngine(opts.ToAudioSettings());
+        engine.Start();
+        capture.StartRecording();
+
+        Thread.Sleep(600);
+        engine.PlaySound(file);
+        Thread.Sleep(3000);
+        capture.StopRecording();
+
+        double rms = count > 0 ? Math.Sqrt(sum[0] / count) : 0;
+        Console.WriteLine($"в кабеле: пик {peak[0]:F4}, RMS {rms:F4}");
+        return 0;
+    }
+
+    /// <summary>Печатает пик, RMS и признаки мусора — по ним видно порчу формата.</summary>
+    private static string Describe(float[] samples, string label)
+    {
+        if (samples.Length == 0)
+            return $"{label}: пусто";
+
+        double peak = 0;
+        double sumSquares = 0;
+        int bad = 0;
+
+        foreach (float sample in samples)
+        {
+            if (float.IsNaN(sample) || float.IsInfinity(sample))
+            {
+                bad++;
+                continue;
+            }
+
+            double value = Math.Abs(sample);
+            if (value > peak) peak = value;
+            sumSquares += value * value;
+        }
+
+        double rms = Math.Sqrt(sumSquares / samples.Length);
+        return $"{label}: пик {peak:F4}, RMS {rms:F4}, NaN/Inf {bad}";
+    }
+
     /// <summary>Проверяет декодирование файла тем же кодом, что и воспроизведение.</summary>
     private static int DecodeCheck(string file)
     {
@@ -267,6 +363,29 @@ internal static class Program
 
             double seconds = samples.Length / 2.0 / 48000.0;
             Console.WriteLine($"ок: {samples.Length} сэмплов, {seconds:F2} c, декодировано за {clock.ElapsedMilliseconds} мс");
+            Console.WriteLine(Describe(samples, "MediaFoundation"));
+
+            // Тот же файл старым путём: если числа расходятся, виноват декодер.
+            try
+            {
+                using var legacy = new NAudio.Wave.AudioFileReader(file);
+                var buffer = new float[legacy.WaveFormat.SampleRate * legacy.WaveFormat.Channels];
+                var collected = new List<float>();
+
+                int read;
+                while ((read = legacy.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    for (int i = 0; i < read; i++)
+                        collected.Add(buffer[i]);
+                }
+
+                Console.WriteLine(Describe(collected.ToArray(), "AudioFileReader"));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("старый путь не смог: " + ex.Message);
+            }
+
             return 0;
         }
         catch (Exception ex)

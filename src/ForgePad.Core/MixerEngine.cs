@@ -41,7 +41,7 @@ public sealed class MixerEngine : IDisposable
     private readonly WaveFormat? _monitorRaw;
     private readonly WaveFormat? _monitorFormat;
     private readonly float _monitorGain;
-    private WasapiOut? _monitorOut;
+    private IWavePlayer? _monitorOut;
     private bool _monitorOn = true;
     private long _trims;
     private long _capturedBytes;
@@ -123,24 +123,20 @@ public sealed class MixerEngine : IDisposable
                 var silence = new SilenceProvider(_monitorFormat.SampleRate, _monitorFormat.Channels);
                 _monitorMixer = new MixerProvider(silence, _monitorFormat) { PadGain = _monitorGain };
 
-                IWaveProvider monitorChain = BuildChain(_monitorMixer, _monitorFormat, _monitorRaw, null);
+                // Для монитора используем WinMM: он сам приводит формат под устройство,
+                // в отличие от WASAPI, который требует точного совпадения и на живых
+                // устройствах даёт треск при несовпадении. 16-бит PCM понимают все.
+                IWaveProvider monitorChain = new SampleToWaveProvider16(_monitorMixer);
 
-                // Реальному устройству (особенно беспроводной гарнитуре) 20 мс мало:
-                // оно захлёбывается, и вместо звука слышен треск. Виртуальному кабелю
-                // хватает и 20 мс, но монитору даём запас.
-                int monitorLatency = Math.Max(100, opts.LatencyMs);
+                var waveOut = new WaveOutEvent
+                {
+                    DeviceNumber = FindWaveOutDevice(speakers.FriendlyName),
+                    DesiredLatency = 120,
+                    NumberOfBuffers = 3,
+                };
 
-                _monitorOut = new WasapiOut(speakers, AudioClientShareMode.Shared, true, monitorLatency);
-                try
-                {
-                    _monitorOut.Init(monitorChain);
-                }
-                catch
-                {
-                    _monitorOut.Dispose();
-                    _monitorOut = new WasapiOut(speakers, AudioClientShareMode.Shared, false, monitorLatency);
-                    _monitorOut.Init(monitorChain);
-                }
+                waveOut.Init(monitorChain);
+                _monitorOut = waveOut;
 
                 MonitorName = speakers.FriendlyName;
             }
@@ -325,6 +321,37 @@ public sealed class MixerEngine : IDisposable
             chain = new CountingWaveProvider(chain, onRead);
 
         return chain;
+    }
+
+    /// <summary>
+    /// Ищет то же устройство в нумерации WinMM: имена у MME и WASAPI обычно совпадают.
+    /// Не нашли — -1, то есть устройство по умолчанию.
+    /// </summary>
+    private static int FindWaveOutDevice(string friendlyName)
+    {
+        try
+        {
+            for (int i = 0; i < WaveOut.DeviceCount; i++)
+            {
+                var caps = WaveOut.GetCapabilities(i);
+                string name = caps.ProductName ?? "";
+
+                if (name.Length == 0)
+                    continue;
+
+                if (name.Contains(friendlyName, StringComparison.OrdinalIgnoreCase) ||
+                    friendlyName.Contains(name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+            }
+        }
+        catch
+        {
+            // Перечисление MME может падать — играем в устройство по умолчанию.
+        }
+
+        return -1;
     }
 
     /// <summary>

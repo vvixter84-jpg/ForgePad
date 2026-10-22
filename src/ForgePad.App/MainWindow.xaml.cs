@@ -36,7 +36,7 @@ public partial class MainWindow : Window
     private string? _micTakenFrom;
     private PadTile? _renaming;
     private PadTile? _editing;
-    private bool _monitorOn;
+    private bool _monitorOn = true;
     private bool _capturingHotkey;
     private bool _suspendInspector;
 
@@ -761,9 +761,7 @@ public partial class MainWindow : Window
             var settings = new AudioSettings
             {
                 MicDeviceId = physical is not null && physical != cableId ? physical : null,
-
-                // Монитор выключен по умолчанию: включается клавишей F11.
-                Monitor = false,
+                Monitor = true,
             };
 
             Exception? failure = null;

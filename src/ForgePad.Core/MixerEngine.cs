@@ -125,7 +125,12 @@ public sealed class MixerEngine : IDisposable
 
                 IWaveProvider monitorChain = BuildChain(_monitorMixer, _monitorFormat, _monitorRaw, null);
 
-                _monitorOut = new WasapiOut(speakers, AudioClientShareMode.Shared, true, opts.LatencyMs);
+                // Реальному устройству (особенно беспроводной гарнитуре) 20 мс мало:
+                // оно захлёбывается, и вместо звука слышен треск. Виртуальному кабелю
+                // хватает и 20 мс, но монитору даём запас.
+                int monitorLatency = Math.Max(100, opts.LatencyMs);
+
+                _monitorOut = new WasapiOut(speakers, AudioClientShareMode.Shared, true, monitorLatency);
                 try
                 {
                     _monitorOut.Init(monitorChain);
@@ -133,7 +138,7 @@ public sealed class MixerEngine : IDisposable
                 catch
                 {
                     _monitorOut.Dispose();
-                    _monitorOut = new WasapiOut(speakers, AudioClientShareMode.Shared, false, opts.LatencyMs);
+                    _monitorOut = new WasapiOut(speakers, AudioClientShareMode.Shared, false, monitorLatency);
                     _monitorOut.Init(monitorChain);
                 }
 
